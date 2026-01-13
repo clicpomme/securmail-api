@@ -34,23 +34,19 @@ REPORTS_DIR.mkdir(exist_ok=True)
 # FastAPI app
 app = FastAPI(
     title="SecurMail API",
-    description="API d'audit de sÃ©curitÃ© email par 45 Nord Sec",
+    description="API d'audit de sécurité email par 45 Nord Sec",
     version="2.0.0"
 )
 
-# CORS - Configuré pour Hostgator + Railway
+# CORS - Version SIMPLE qui fonctionne TOUJOURS
+from fastapi.middleware.cors import CORSMiddleware
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://clicpomme.com",
-        "https://www.clicpomme.com",
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-    ],
+    allow_origins=["*"],  # Accepter TOUTES les origines (debug mode)
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
-    max_age=3600,
 )
 
 
@@ -528,7 +524,7 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy"}
+    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
 
 @app.post("/api/audit")
