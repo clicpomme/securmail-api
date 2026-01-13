@@ -38,7 +38,7 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# CORS - À configurer avec ton domaine
+# CORS - Configuré pour Hostgator + Railway
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -46,11 +46,11 @@ app.add_middleware(
         "https://www.clicpomme.com",
         "http://localhost:8000",
         "http://127.0.0.1:8000",
-        "*",  # Accept all origins
     ],
-    allow_credentials=False,  # Doit être False avec "*"
-    allow_methods=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    max_age=3600,
 )
 
 
