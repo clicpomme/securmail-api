@@ -560,7 +560,7 @@ async def health():
 async def audit(request: AuditRequest):
     """Lance un audit de sÃ©curitÃ© email."""
     return StreamingResponse(
-        run_audit(request.domain, request.skip_typo, request.check_hibp),
+        run_audit(request.domain, request.skip_typo, request.check_hibp, request.email),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
