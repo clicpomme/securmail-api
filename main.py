@@ -2,7 +2,7 @@
 SecurMail API - Backend pour l'audit de sÃ©curitÃ© email
 45 Nord Sec
 """
- # Force redeploy - timestamp 2026-01-13T22:00:00Z
+
 import os
 import json
 import asyncio
@@ -678,4 +678,5 @@ Please contact the client at {request.email} to discuss the premium report.
 # Point d'entrée
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
