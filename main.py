@@ -1,5 +1,5 @@
 """
-SecurMail API - Backend pour l'audit de sécurité email
+SecurMail API - Backend pour l'audit de sÃ©curitÃ© email
 45 Nord Sec
 """
 
@@ -34,11 +34,11 @@ REPORTS_DIR.mkdir(exist_ok=True)
 # FastAPI app
 app = FastAPI(
     title="SecurMail API",
-    description="API d'audit de sécurité email par 45 Nord Sec",
+    description="API d'audit de sÃ©curitÃ© email par 45 Nord Sec",
     version="2.0.0"
 )
 
-# CORS - Ã€ configurer avec ton domaine
+# CORS - À configurer avec ton domaine
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -46,6 +46,7 @@ app.add_middleware(
         "https://www.clicpomme.com",
         "http://localhost:8000",
         "http://127.0.0.1:8000",
+        "*",  # Accept all origins (debug mode)
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -56,9 +57,8 @@ app.add_middleware(
 # ModÃ¨les
 class AuditRequest(BaseModel):
     domain: str
-    email: Optional[str] = None
     skip_typo: bool = False
-    check_hibp: bool = False
+    check_hibp: bool = True
 
     @field_validator('domain')
     @classmethod
@@ -67,17 +67,6 @@ class AuditRequest(BaseModel):
         pattern = r'^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z]{2,})+$'
         if not re.match(pattern, v):
             raise ValueError('Format de domaine invalide')
-        return v
-
-    @field_validator('email')
-    @classmethod
-    def validate_email(cls, v):
-        if v is None or v == '':
-            return None
-        v = v.strip().lower()
-        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-        if not re.match(email_pattern, v):
-            raise ValueError('Format d\'email invalide')
         return v
 
 
@@ -121,7 +110,7 @@ def dns_query(domain: str, record_type: str, prefix: str = None) -> Optional[str
 
 
 async def check_spf(domain: str) -> dict:
-    """Vérifie l'enregistrement SPF."""
+    """VÃ©rifie l'enregistrement SPF."""
     result = {"check": "spf", "found": False, "raw": "", "alert": None, "score": 0, "quality": None}
     
     try:
@@ -132,13 +121,13 @@ async def check_spf(domain: str) -> dict:
                     result["found"] = True
                     result["raw"] = line.replace('"', '')
                     
-                    # Analyser la qualité
+                    # Analyser la qualitÃ©
                     if "-all" in line:
                         result["score"] = 15
                         result["quality"] = "Strict (-all)"
                     elif "~all" in line:
                         result["score"] = 10
-                        result["quality"] = "Modéré (~all)"
+                        result["quality"] = "ModÃ©rÃ© (~all)"
                     elif "?all" in line:
                         result["score"] = 5
                         result["quality"] = "Faible (?all)"
@@ -148,23 +137,23 @@ async def check_spf(domain: str) -> dict:
                         result["alert"] = "SPF avec +all permet Ã  tout le monde d'envoyer des emails!"
                     else:
                         result["score"] = 12
-                        result["quality"] = "Présent"
+                        result["quality"] = "PrÃ©sent"
                     
-                    result["raw"] += f"\nQualité: {result['quality']}"
+                    result["raw"] += f"\nQualitÃ©: {result['quality']}"
                     break
         
         if not result["found"]:
-            result["raw"] = "Aucun enregistrement SPF trouvé"
-            result["alert"] = "Aucun enregistrement SPF détecté"
+            result["raw"] = "Aucun enregistrement SPF trouvÃ©"
+            result["alert"] = "Aucun enregistrement SPF dÃ©tectÃ©"
     except Exception as e:
         result["raw"] = f"Erreur: {str(e)}"
-        result["alert"] = "Erreur lors de la vérification SPF"
+        result["alert"] = "Erreur lors de la vÃ©rification SPF"
     
     return result
 
 
 async def check_dkim(domain: str) -> dict:
-    """Vérifie les enregistrements DKIM."""
+    """VÃ©rifie les enregistrements DKIM."""
     result = {"check": "dkim", "found": False, "raw": "", "alert": None, "score": 0}
     
     selectors = [
@@ -194,17 +183,17 @@ async def check_dkim(domain: str) -> dict:
     if found_selectors:
         result["found"] = True
         result["score"] = 15
-        raw_lines.insert(0, f"Sélecteurs trouvés: {', '.join(found_selectors)}\n")
+        raw_lines.insert(0, f"SÃ©lecteurs trouvÃ©s: {', '.join(found_selectors)}\n")
         result["raw"] = "\n".join(raw_lines)
     else:
-        result["raw"] = "Aucun enregistrement DKIM détecté\n(Sélecteurs testés: default, google, selector1, selector2, etc.)"
-        result["alert"] = "Aucun enregistrement DKIM détecté"
+        result["raw"] = "Aucun enregistrement DKIM dÃ©tectÃ©\n(SÃ©lecteurs testÃ©s: default, google, selector1, selector2, etc.)"
+        result["alert"] = "Aucun enregistrement DKIM dÃ©tectÃ©"
     
     return result
 
 
 async def check_dmarc(domain: str) -> dict:
-    """Vérifie l'enregistrement DMARC."""
+    """VÃ©rifie l'enregistrement DMARC."""
     result = {"check": "dmarc", "found": False, "raw": "", "alert": None, "score": 0, "policy": None}
     
     try:
@@ -220,26 +209,26 @@ async def check_dmarc(domain: str) -> dict:
                 result["policy"] = "Reject (strict)"
             elif "p=quarantine" in record:
                 result["score"] = 12
-                result["policy"] = "Quarantine (modéré)"
+                result["policy"] = "Quarantine (modÃ©rÃ©)"
             elif "p=none" in record:
                 result["score"] = 5
                 result["policy"] = "None (surveillance)"
                 result["alert"] = "DMARC en mode surveillance (p=none) - pas de protection active"
             else:
                 result["score"] = 10
-                result["policy"] = "Présent"
+                result["policy"] = "PrÃ©sent"
             
             result["raw"] += f"\nPolitique: {result['policy']}"
             
-            # Vérifier pct
+            # VÃ©rifier pct
             pct_match = re.search(r'pct=(\d+)', record)
             if pct_match:
                 pct = int(pct_match.group(1))
                 if pct < 100:
                     result["raw"] += f"\nâš  Attention: seulement {pct}% des messages couverts"
         else:
-            result["raw"] = "Aucun enregistrement DMARC trouvé"
-            result["alert"] = "Aucun enregistrement DMARC détecté"
+            result["raw"] = "Aucun enregistrement DMARC trouvÃ©"
+            result["alert"] = "Aucun enregistrement DMARC dÃ©tectÃ©"
     except Exception as e:
         result["raw"] = f"Erreur: {str(e)}"
     
@@ -247,7 +236,7 @@ async def check_dmarc(domain: str) -> dict:
 
 
 async def check_bimi(domain: str) -> dict:
-    """Vérifie l'enregistrement BIMI."""
+    """VÃ©rifie l'enregistrement BIMI."""
     result = {"check": "bimi", "found": False, "raw": "", "alert": None, "score": 0}
     
     record = dns_query(domain, "TXT", "default._bimi")
@@ -258,15 +247,15 @@ async def check_bimi(domain: str) -> dict:
         result["raw"] = record.replace('"', '')
         
         if "l=" in record:
-            result["raw"] += "\nâœ“ Logo BIMI configuré"
+            result["raw"] += "\nâœ“ Logo BIMI configurÃ©"
     else:
-        result["raw"] = "Aucun enregistrement BIMI trouvé\n(Optionnel - améliore la visibilité de marque)"
+        result["raw"] = "Aucun enregistrement BIMI trouvÃ©\n(Optionnel - amÃ©liore la visibilitÃ© de marque)"
     
     return result
 
 
 async def check_mtasts(domain: str) -> dict:
-    """Vérifie MTA-STS."""
+    """VÃ©rifie MTA-STS."""
     result = {"check": "mtasts", "found": False, "raw": "", "alert": None, "score": 0}
     
     lines = []
@@ -280,7 +269,7 @@ async def check_mtasts(domain: str) -> dict:
         lines.append("")
     else:
         lines.append("[DNS MTA-STS]")
-        lines.append("Non trouvé")
+        lines.append("Non trouvÃ©")
         lines.append("")
     
     # Politique HTTPS
@@ -308,7 +297,7 @@ async def check_mtasts(domain: str) -> dict:
 
 
 async def check_tlsrpt(domain: str) -> dict:
-    """Vérifie TLS-RPT."""
+    """VÃ©rifie TLS-RPT."""
     result = {"check": "tlsrpt", "found": False, "raw": "", "alert": None, "score": 0}
     
     record = dns_query(domain, "TXT", "_smtp._tls")
@@ -318,13 +307,13 @@ async def check_tlsrpt(domain: str) -> dict:
         result["score"] = 15
         result["raw"] = record.replace('"', '')
     else:
-        result["raw"] = "Aucun enregistrement TLS-RPT trouvé"
+        result["raw"] = "Aucun enregistrement TLS-RPT trouvÃ©"
     
     return result
 
 
 async def check_dnssec(domain: str) -> dict:
-    """Vérifie DNSSEC."""
+    """VÃ©rifie DNSSEC."""
     result = {"check": "dnssec", "found": False, "raw": "", "alert": None, "score": 0}
     
     dnskey = dns_query(domain, "DNSKEY")
@@ -332,15 +321,15 @@ async def check_dnssec(domain: str) -> dict:
     if dnskey:
         result["found"] = True
         result["score"] = 5
-        result["raw"] = "DNSSEC activé âœ“\n\n" + dnskey[:300]
+        result["raw"] = "DNSSEC activÃ© âœ“\n\n" + dnskey[:300]
     else:
-        result["raw"] = "DNSSEC non activé\n(Recommandé pour protéger contre l'usurpation DNS)"
+        result["raw"] = "DNSSEC non activÃ©\n(RecommandÃ© pour protÃ©ger contre l'usurpation DNS)"
     
     return result
 
 
 async def check_caa(domain: str) -> dict:
-    """Vérifie CAA."""
+    """VÃ©rifie CAA."""
     result = {"check": "caa", "found": False, "raw": "", "alert": None, "score": 0}
     
     record = dns_query(domain, "CAA")
@@ -350,13 +339,13 @@ async def check_caa(domain: str) -> dict:
         result["score"] = 5
         result["raw"] = record
     else:
-        result["raw"] = "Aucun enregistrement CAA trouvé\n(Recommandé pour limiter les CA autorisées)"
+        result["raw"] = "Aucun enregistrement CAA trouvÃ©\n(RecommandÃ© pour limiter les CA autorisÃ©es)"
     
     return result
 
 
 async def check_hibp(domain: str) -> dict:
-    """Vérifie Have I Been Pwned."""
+    """VÃ©rifie Have I Been Pwned."""
     result = {"check": "hibp", "found": False, "raw": "", "alert": None, "score": 0}
     
     prefixes = ["contact", "info", "admin", "support"]
@@ -382,11 +371,11 @@ async def check_hibp(domain: str) -> dict:
                     breaches = response.json()
                     breach_names = [b["Name"] for b in breaches]
                     total_breaches += len(breaches)
-                    lines.append(f"  âš  Trouvé dans {len(breaches)} fuite(s): {', '.join(breach_names[:5])}")
+                    lines.append(f"  âš  TrouvÃ© dans {len(breaches)} fuite(s): {', '.join(breach_names[:5])}")
                 elif response.status_code == 404:
                     lines.append("  âœ“ Aucune fuite connue")
                 elif response.status_code == 401:
-                    lines.append("  Erreur: clé API invalide")
+                    lines.append("  Erreur: clÃ© API invalide")
                     break
                 elif response.status_code == 429:
                     lines.append("  Erreur: limite de requÃªtes atteinte")
@@ -403,18 +392,18 @@ async def check_hibp(domain: str) -> dict:
     result["raw"] = "\n".join(lines)
     
     if total_breaches > 0:
-        result["found"] = True  # found = problÃ¨me trouvé
-        result["alert"] = f"{total_breaches} fuite(s) de données détectée(s)"
+        result["found"] = True  # found = problÃ¨me trouvÃ©
+        result["alert"] = f"{total_breaches} fuite(s) de donnÃ©es dÃ©tectÃ©e(s)"
     
     return result
 
 
 async def check_typosquatting(domain: str) -> dict:
-    """Vérifie le typosquatting avec dnstwist."""
+    """VÃ©rifie le typosquatting avec dnstwist."""
     result = {"check": "typosquatting", "found": False, "raw": "", "alert": None, "score": 0}
     
     try:
-        # Exécuter dnstwist
+        # ExÃ©cuter dnstwist
         process = await asyncio.create_subprocess_exec(
             "dnstwist", "--registered", "--format", "json", domain,
             stdout=asyncio.subprocess.PIPE,
@@ -425,14 +414,14 @@ async def check_typosquatting(domain: str) -> dict:
         
         if process.returncode == 0:
             data = json.loads(stdout.decode())
-            # Filtrer pour ne garder que les domaines enregistrés
+            # Filtrer pour ne garder que les domaines enregistrÃ©s
             registered = [d for d in data if d.get("dns_a") or d.get("dns_mx")]
             
             if registered:
                 result["found"] = True
                 result["score"] = 15
                 
-                lines = [f"Domaines similaires enregistrés: {len(registered)}\n"]
+                lines = [f"Domaines similaires enregistrÃ©s: {len(registered)}\n"]
                 for d in registered[:20]:  # Limiter Ã  20
                     line = f"â€¢ {d.get('domain', 'N/A')} ({d.get('fuzzer', '')})"
                     if d.get('dns_a'):
@@ -445,9 +434,9 @@ async def check_typosquatting(domain: str) -> dict:
                 result["raw"] = "\n".join(lines)
                 
                 if len(registered) > 10:
-                    result["alert"] = f"{len(registered)} domaines similaires détectés - risque élevé"
+                    result["alert"] = f"{len(registered)} domaines similaires dÃ©tectÃ©s - risque Ã©levÃ©"
             else:
-                result["raw"] = "Aucun domaine similaire enregistré détecté"
+                result["raw"] = "Aucun domaine similaire enregistrÃ© dÃ©tectÃ©"
         else:
             result["raw"] = f"Erreur dnstwist: {stderr.decode()}"
             
@@ -462,7 +451,7 @@ async def check_typosquatting(domain: str) -> dict:
 
 
 async def run_audit(domain: str, skip_typo: bool, check_hibp_flag: bool) -> AsyncGenerator[str, None]:
-    """Exécute l'audit complet avec streaming."""
+    """ExÃ©cute l'audit complet avec streaming."""
     
     total_score = 0
     results = {}
@@ -485,7 +474,7 @@ async def run_audit(domain: str, skip_typo: bool, check_hibp_flag: bool) -> Asyn
     if not skip_typo:
         checks.append(("typosquatting", check_typosquatting))
     
-    # Exécuter chaque check
+    # ExÃ©cuter chaque check
     for check_name, check_func in checks:
         # Progress: running
         yield f"data: {json.dumps({'type': 'progress', 'check': check_name, 'status': 'running'})}\n\n"
@@ -511,7 +500,7 @@ async def run_audit(domain: str, skip_typo: bool, check_hibp_flag: bool) -> Asyn
     # Score final
     yield f"data: {json.dumps({'type': 'score', 'domain': domain, 'score': total_score})}\n\n"
     
-    # Générer PDF (optionnel)
+    # GÃ©nÃ©rer PDF (optionnel)
     pdf_url = None
     try:
         pdf_path = await generate_pdf_report(domain, total_score, results)
@@ -525,9 +514,9 @@ async def run_audit(domain: str, skip_typo: bool, check_hibp_flag: bool) -> Asyn
 
 
 async def generate_pdf_report(domain: str, score: int, results: dict) -> Optional[Path]:
-    """GénÃ¨re un rapport PDF."""
+    """GÃ©nÃ¨re un rapport PDF."""
     # Pour l'instant, on retourne None
-    # Tu peux implémenter la génération PDF avec WeasyPrint si nécessaire
+    # Tu peux implÃ©menter la gÃ©nÃ©ration PDF avec WeasyPrint si nÃ©cessaire
     return None
 
 
@@ -544,7 +533,7 @@ async def health():
 
 @app.post("/api/audit")
 async def audit(request: AuditRequest):
-    """Lance un audit de sécurité email."""
+    """Lance un audit de sÃ©curitÃ© email."""
     return StreamingResponse(
         run_audit(request.domain, request.skip_typo, request.check_hibp),
         media_type="text/event-stream",
