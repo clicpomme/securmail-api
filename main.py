@@ -1,5 +1,5 @@
 """
-SecurMail API - Backend pour l'audit de sÃ©curitÃ© email
+SecurMail API - Email Security Audit Backend
 45 Nord Sec
 """
 
@@ -8,7 +8,6 @@ import json
 import asyncio
 import subprocess
 import tempfile
-import io
 from datetime import datetime
 from typing import Optional, AsyncGenerator
 from pathlib import Path
@@ -20,9 +19,6 @@ from pydantic import BaseModel, field_validator
 import dns.resolver
 import httpx
 import re
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 
 # Configuration
 HIBP_API_KEY = os.getenv("HIBP_API_KEY", "2a1fbd560278460290efbb182bc7253b")
@@ -34,23 +30,26 @@ REPORTS_DIR.mkdir(exist_ok=True)
 # FastAPI app
 app = FastAPI(
     title="SecurMail API",
-    description="API d'audit de sécurité email par 45 Nord Sec",
-    version="2.0.0"
+    description="Email security audit API by 45 Nord Sec",
+    version="2.6.0"
 )
 
-# CORS - Version SIMPLE qui fonctionne TOUJOURS
-from fastapi.middleware.cors import CORSMiddleware
-
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Accepter TOUTES les origines (debug mode)
+    allow_origins=[
+        "https://clicpomme.com",
+        "https://www.clicpomme.com",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    ],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# ModÃ¨les
+# Models
 class AuditRequest(BaseModel):
     domain: str
     email: Optional[str] = None
@@ -63,30 +62,13 @@ class AuditRequest(BaseModel):
         v = v.strip().lower()
         pattern = r'^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z]{2,})+$'
         if not re.match(pattern, v):
-            raise ValueError('Format de domaine invalide')
+            raise ValueError('Invalid domain format')
         return v
 
 
-class GenerateReportRequest(BaseModel):
-    domain: str
-    score: int
-    results: list = []
-    reportType: str = "free"
-
-
-class PremiumRequestModel(BaseModel):
-    name: str
-    email: str
-    company: str = ""
-    domain: str
-    score: int
-    message: str = ""
-    userEmail: str = ""
-
-
-# Utilitaires
+# Utilities
 def dns_query(domain: str, record_type: str, prefix: str = None) -> Optional[str]:
-    """Effectue une requÃªte DNS."""
+    """Perform DNS query."""
     try:
         resolver = dns.resolver.Resolver()
         resolver.timeout = DNS_TIMEOUT
@@ -107,7 +89,7 @@ def dns_query(domain: str, record_type: str, prefix: str = None) -> Optional[str
 
 
 async def check_spf(domain: str) -> dict:
-    """VÃ©rifie l'enregistrement SPF."""
+    """Check SPF record."""
     result = {"check": "spf", "found": False, "raw": "", "alert": None, "score": 0, "quality": None}
     
     try:
@@ -118,12 +100,11 @@ async def check_spf(domain: str) -> dict:
                     result["found"] = True
                     result["raw"] = line.replace('"', '')
                     
-                    # Analyser la qualitÃ©
                     if "-all" in line:
                         result["score"] = 25
                         result["quality"] = "Strict (-all)"
                     elif "~all" in line:
-                        result["score"] = 0
+                        result["score"] = 25
                         result["quality"] = "Moderate (~all)"
                     elif "?all" in line:
                         result["score"] = 0
@@ -131,32 +112,32 @@ async def check_spf(domain: str) -> dict:
                     elif "+all" in line:
                         result["score"] = 0
                         result["quality"] = "Dangerous (+all)"
-                        result["alert"] = "SPF avec +all permet Ã  tout le monde d'envoyer des emails!"
+                        result["alert"] = "SPF with +all allows anyone to send emails!"
                     else:
                         result["score"] = 25
-                        result["quality"] = "Present"
+                        result["quality"] = "Configured"
                     
                     result["raw"] += f"\nQuality: {result['quality']}"
                     break
         
         if not result["found"]:
-            result["raw"] = "No SPF records found"
-            result["alert"] = "No SPF records detected"
+            result["raw"] = "No SPF record found"
+            result["alert"] = "No SPF record detected"
     except Exception as e:
         result["raw"] = f"Error: {str(e)}"
-        result["alert"] = "Erreur lors de la vÃ©rification SPF"
+        result["alert"] = "Error checking SPF"
     
     return result
 
 
 async def check_dkim(domain: str) -> dict:
-    """VÃ©rifie les enregistrements DKIM."""
+    """Check DKIM records."""
     result = {"check": "dkim", "found": False, "raw": "", "alert": None, "score": 0}
     
     selectors = [
         "default", "s1", "s2", "mail", "dkim", "email",
-        "selector1", "selector2",  # Microsoft 365
-        "google", "20161025", "20210112",  # Google
+        "selector1", "selector2",
+        "google", "20161025", "20210112",
         "k1", "k2", "k3",
         "mandrill", "mailchimp", "mc",
         "smtp", "smtpapi",
@@ -173,7 +154,7 @@ async def check_dkim(domain: str) -> dict:
         record = dns_query(domain, "TXT", f"{selector}._domainkey")
         if record:
             found_selectors.append(selector)
-            raw_lines.append(f"â†’ {selector}._domainkey.{domain}")
+            raw_lines.append(f"-> {selector}._domainkey.{domain}")
             raw_lines.append(record.replace('"', '')[:200] + "...")
             raw_lines.append("")
     
@@ -190,7 +171,7 @@ async def check_dkim(domain: str) -> dict:
 
 
 async def check_dmarc(domain: str) -> dict:
-    """VÃ©rifie l'enregistrement DMARC."""
+    """Check DMARC record."""
     result = {"check": "dmarc", "found": False, "raw": "", "alert": None, "score": 0, "policy": None}
     
     try:
@@ -200,7 +181,6 @@ async def check_dmarc(domain: str) -> dict:
             result["found"] = True
             result["raw"] = record.replace('"', '')
             
-            # Analyser la politique
             if "p=reject" in record:
                 result["score"] = 25
                 result["policy"] = "Reject (strict)"
@@ -212,20 +192,19 @@ async def check_dmarc(domain: str) -> dict:
                 result["policy"] = "None (monitoring)"
                 result["alert"] = "DMARC in monitoring mode (p=none) - no active protection"
             else:
-                result["score"] = 0
-                result["policy"] = "Present"
+                result["score"] = 25
+                result["policy"] = "Configured"
             
-            result["raw"] += f"\nPolitique: {result['policy']}"
+            result["raw"] += f"\nPolicy: {result['policy']}"
             
-            # VÃ©rifier pct
             pct_match = re.search(r'pct=(\d+)', record)
             if pct_match:
                 pct = int(pct_match.group(1))
                 if pct < 100:
-                    result["raw"] += f"\nâš  Warning: Only {pct}% of messages covered"
+                    result["raw"] += f"\nWarning: only {pct}% of messages covered"
         else:
-            result["raw"] = "No DMARC records found"
-            result["alert"] = "No DMARC records detected"
+            result["raw"] = "No DMARC record found"
+            result["alert"] = "No DMARC record detected"
     except Exception as e:
         result["raw"] = f"Error: {str(e)}"
     
@@ -233,31 +212,30 @@ async def check_dmarc(domain: str) -> dict:
 
 
 async def check_bimi(domain: str) -> dict:
-    """VÃ©rifie l'enregistrement BIMI."""
+    """Check BIMI record."""
     result = {"check": "bimi", "found": False, "raw": "", "alert": None, "score": 0}
     
     record = dns_query(domain, "TXT", "default._bimi")
     
     if record:
         result["found"] = True
-        result["score"] = 0
+        result["score"] = 25
         result["raw"] = record.replace('"', '')
         
         if "l=" in record:
-            result["raw"] += "\nâœ“ Logo BIMI configurÃ©"
+            result["raw"] += "\n✓ Logo BIMI configured"
     else:
-        result["raw"] = "No BIMI records found\n(Optionnel - amÃ©liore la visibilitÃ© de marque)"
+        result["raw"] = "No BIMI record found\n(Optional - improves brand visibility)"
     
     return result
 
 
 async def check_mtasts(domain: str) -> dict:
-    """VÃ©rifie MTA-STS."""
+    """Check MTA-STS."""
     result = {"check": "mtasts", "found": False, "raw": "", "alert": None, "score": 0}
     
     lines = []
     
-    # Enregistrement DNS
     record = dns_query(domain, "TXT", "_mta-sts")
     if record:
         result["score"] = 0
@@ -266,26 +244,25 @@ async def check_mtasts(domain: str) -> dict:
         lines.append("")
     else:
         lines.append("[DNS MTA-STS]")
-        lines.append("Non trouvÃ©")
+        lines.append("Not found")
         lines.append("")
     
-    # Politique HTTPS
     try:
         async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
             response = await client.get(f"https://mta-sts.{domain}/.well-known/mta-sts.txt")
             if response.status_code == 200:
                 result["score"] = 0
                 result["found"] = True
-                lines.append("[Politique HTTPS]")
+                lines.append("[HTTPS Policy]")
                 lines.append(response.text[:500])
                 
                 if "mode: enforce" in response.text:
-                    lines.append("\nâœ“ Mode enforce (strict)")
+                    lines.append("\n✓ Mode enforce (strict)")
                 elif "mode: testing" in response.text:
-                    lines.append("\nâš  Mode testing (surveillance)")
+                    lines.append("\nWarning: Mode testing (monitoring)")
     except:
-        lines.append("[Politique HTTPS]")
-        lines.append("Non accessible")
+        lines.append("[HTTPS Policy]")
+        lines.append("Not accessible")
     
     result["raw"] = "\n".join(lines)
     result["found"] = result["score"] > 0
@@ -294,23 +271,23 @@ async def check_mtasts(domain: str) -> dict:
 
 
 async def check_tlsrpt(domain: str) -> dict:
-    """VÃ©rifie TLS-RPT."""
+    """Check TLS-RPT."""
     result = {"check": "tlsrpt", "found": False, "raw": "", "alert": None, "score": 0}
     
     record = dns_query(domain, "TXT", "_smtp._tls")
     
     if record:
         result["found"] = True
-        result["score"] = 25
+        result["score"] = 0
         result["raw"] = record.replace('"', '')
     else:
-        result["raw"] = "Aucun enregistrement TLS-RPT trouvÃ©"
+        result["raw"] = "No TLS-RPT record found"
     
     return result
 
 
 async def check_dnssec(domain: str) -> dict:
-    """VÃ©rifie DNSSEC."""
+    """Check DNSSEC."""
     result = {"check": "dnssec", "found": False, "raw": "", "alert": None, "score": 0}
     
     dnskey = dns_query(domain, "DNSKEY")
@@ -318,15 +295,15 @@ async def check_dnssec(domain: str) -> dict:
     if dnskey:
         result["found"] = True
         result["score"] = 0
-        result["raw"] = "DNSSEC activÃ© âœ“\n\n" + dnskey[:300]
+        result["raw"] = "DNSSEC enabled\n\n" + dnskey[:300]
     else:
-        result["raw"] = "DNSSEC non activÃ©\n(RecommandÃ© pour protÃ©ger contre l'usurpation DNS)"
+        result["raw"] = "DNSSEC not enabled\n(Recommended to protect against DNS spoofing)"
     
     return result
 
 
 async def check_caa(domain: str) -> dict:
-    """VÃ©rifie CAA."""
+    """Check CAA."""
     result = {"check": "caa", "found": False, "raw": "", "alert": None, "score": 0}
     
     record = dns_query(domain, "CAA")
@@ -336,7 +313,7 @@ async def check_caa(domain: str) -> dict:
         result["score"] = 0
         result["raw"] = record
     else:
-        result["raw"] = "Aucun enregistrement CAA trouvÃ©\n(RecommandÃ© pour limiter les CA autorisÃ©es)"
+        result["raw"] = "No CAA record found\n(Recommended to limit authorized CAs)"
     
     return result
 
@@ -345,7 +322,6 @@ async def check_hibp(domain: str, custom_email: Optional[str] = None) -> dict:
     """Check Have I Been Pwned for a specific email."""
     result = {"check": "hibp", "found": False, "raw": "", "alert": None, "score": 0}
     
-    # If custom email provided, check ONLY that email
     if not custom_email:
         result["raw"] = "No email provided for breach checking"
         return result
@@ -362,7 +338,7 @@ async def check_hibp(domain: str, custom_email: Optional[str] = None) -> dict:
                     params={"truncateResponse": "false"},
                     headers={
                         "hibp-api-key": HIBP_API_KEY,
-                        "user-agent": "SecurMail-45NordSec/2.0"
+                        "user-agent": "SecurMail-45NordSec/2.6"
                     }
                 )
                 
@@ -381,12 +357,13 @@ async def check_hibp(domain: str, custom_email: Optional[str] = None) -> dict:
                         lines.append(f"  • {breach_name} ({breach_date}) - {breach_count:,} records")
                     
                     if len(breaches) > 10:
-                        lines.append(f"")
-                        lines.append(f"  ... and {len(breaches) - 10} more breaches")
+                        lines.append(f"\n  ... and {len(breaches) - 10} more breaches")
                     
                 elif response.status_code == 404:
                     lines.append(f"Email: {email}")
                     lines.append("Status: No known breaches found")
+                    lines.append("")
+                    lines.append("This email address has not been found in known data breaches.")
                     
                 elif response.status_code == 401:
                     lines.append("Error: Invalid HIBP API key")
@@ -399,10 +376,12 @@ async def check_hibp(domain: str, custom_email: Optional[str] = None) -> dict:
                     
                 else:
                     lines.append(f"Error: HTTP {response.status_code}")
+                    lines.append("Could not check email with HIBP service")
                     result["alert"] = f"HIBP service error: HTTP {response.status_code}"
                     
             except Exception as e:
                 lines.append(f"Error: {str(e)}")
+                lines.append("Could not connect to HIBP service")
                 result["alert"] = f"Error checking email: {str(e)}"
     
     except Exception as e:
@@ -418,12 +397,12 @@ async def check_hibp(domain: str, custom_email: Optional[str] = None) -> dict:
     
     return result
 
+
 async def check_typosquatting(domain: str) -> dict:
-    """VÃ©rifie le typosquatting avec dnstwist."""
+    """Check typosquatting with dnstwist."""
     result = {"check": "typosquatting", "found": False, "raw": "", "alert": None, "score": 0}
     
     try:
-        # ExÃ©cuter dnstwist
         process = await asyncio.create_subprocess_exec(
             "dnstwist", "--registered", "--format", "json", domain,
             stdout=asyncio.subprocess.PIPE,
@@ -434,49 +413,48 @@ async def check_typosquatting(domain: str) -> dict:
         
         if process.returncode == 0:
             data = json.loads(stdout.decode())
-            # Filtrer pour ne garder que les domaines enregistrÃ©s
             registered = [d for d in data if d.get("dns_a") or d.get("dns_mx")]
             
             if registered:
                 result["found"] = True
-                result["score"] = 25
+                result["score"] = 0
                 
-                lines = [f"Similar registered domains: {len(registered)}\n"]
-                for d in registered[:20]:  # Limiter Ã  20
-                    line = f"â€¢ {d.get('domain', 'N/A')} ({d.get('fuzzer', '')})"
+                lines = [f"Similar domains registered: {len(registered)}\n"]
+                for d in registered[:20]:
+                    line = f"• {d.get('domain', 'N/A')} ({d.get('fuzzer', '')})"
                     if d.get('dns_a'):
                         line += f" - IP: {d['dns_a'][0]}"
                     lines.append(line)
                 
                 if len(registered) > 20:
-                    lines.append(f"\n... et {len(registered) - 20} autres")
+                    lines.append(f"\n... and {len(registered) - 20} others")
                 
                 result["raw"] = "\n".join(lines)
                 
                 if len(registered) > 10:
                     result["alert"] = f"{len(registered)} similar domains detected - high risk"
             else:
-                result["raw"] = "No similar registered domains detected"
+                result["raw"] = "No similar domains detected"
         else:
-            result["raw"] = f"Erreur dnstwist: {stderr.decode()}"
+            result["raw"] = f"Dnstwist error: {stderr.decode()}"
             
     except asyncio.TimeoutError:
-        result["raw"] = "Timeout - l'analyse typosquatting a pris trop de temps"
+        result["raw"] = "Timeout - typosquatting analysis took too long"
     except FileNotFoundError:
-        result["raw"] = "dnstwist not available on this server"
+        result["raw"] = "Dnstwist not available on this server"
     except Exception as e:
         result["raw"] = f"Error: {str(e)}"
     
     return result
 
 
-async def run_audit(domain: str, skip_typo: bool, check_hibp_flag: bool, custom_email: Optional[str] = None) -> AsyncGenerator[str, None]:
-    """ExÃ©cute l'audit complet avec streaming."""
+async def run_audit(domain: str, skip_typo: bool, check_hibp_flag: bool, email: Optional[str] = None) -> AsyncGenerator[str, None]:
+    """Run complete security audit with streaming."""
     
     total_score = 0
     results = {}
     
-    # Core checks
+    # Core checks (critical)
     checks = [
         ("spf", check_spf),
         ("dkim", check_dkim),
@@ -484,7 +462,7 @@ async def run_audit(domain: str, skip_typo: bool, check_hibp_flag: bool, custom_
         ("bimi", check_bimi),
     ]
     
-    # Optional checks
+    # Optional checks (informational, 0 points)
     optional_checks = [
         ("mtasts", check_mtasts),
         ("tlsrpt", check_tlsrpt),
@@ -493,15 +471,16 @@ async def run_audit(domain: str, skip_typo: bool, check_hibp_flag: bool, custom_
     ]
     checks.extend(optional_checks)
     
-    if check_hibp_flag:
-        checks.append(("hibp", lambda domain=domain, email=custom_email: check_hibp(domain, email)))
-    
+    # Only add typosquatting if requested
     if not skip_typo:
         checks.append(("typosquatting", check_typosquatting))
     
-    # ExÃ©cuter chaque check
+    # Only add HIBP if email is provided
+    if email:
+        checks.append(("hibp", lambda d=domain, e=email: check_hibp(d, e)))
+    
+    # Execute each check
     for check_name, check_func in checks:
-        # Progress: running
         yield f"data: {json.dumps({'type': 'progress', 'check': check_name, 'status': 'running'})}\n\n"
         
         try:
@@ -509,23 +488,20 @@ async def run_audit(domain: str, skip_typo: bool, check_hibp_flag: bool, custom_
             results[check_name] = result
             total_score += result.get("score", 0)
             
-            # Progress: done
             yield f"data: {json.dumps({'type': 'progress', 'check': check_name, 'status': 'done'})}\n\n"
-            
-            # Result
             yield f"data: {json.dumps({'type': 'result', 'check': check_name, 'data': result})}\n\n"
             
         except Exception as e:
             yield f"data: {json.dumps({'type': 'progress', 'check': check_name, 'status': 'error'})}\n\n"
-            yield f"data: {json.dumps({'type': 'result', 'check': check_name, 'data': {'found': False, 'raw': str(e), 'alert': 'Erreur'}})}\n\n"
+            yield f"data: {json.dumps({'type': 'result', 'check': check_name, 'data': {'found': False, 'raw': str(e), 'alert': 'Error'}})}\n\n"
     
-    # Plafonner le score
+    # Cap score at 100
     total_score = min(total_score, 100)
     
-    # Score final
+    # Final score
     yield f"data: {json.dumps({'type': 'score', 'domain': domain, 'score': total_score})}\n\n"
     
-    # GÃ©nÃ©rer PDF (optionnel)
+    # Generate PDF (optional)
     pdf_url = None
     try:
         pdf_path = await generate_pdf_report(domain, total_score, results)
@@ -534,33 +510,31 @@ async def run_audit(domain: str, skip_typo: bool, check_hibp_flag: bool, custom_
     except:
         pass
     
-    # Complet
+    # Complete
     yield f"data: {json.dumps({'type': 'complete', 'domain': domain, 'score': total_score, 'pdf_url': pdf_url})}\n\n"
 
 
 async def generate_pdf_report(domain: str, score: int, results: dict) -> Optional[Path]:
-    """GÃ©nÃ¨re un rapport PDF."""
-    # Pour l'instant, on retourne None
-    # Tu peux implÃ©menter la gÃ©nÃ©ration PDF avec WeasyPrint si nÃ©cessaire
+    """Generate PDF report."""
     return None
 
 
-# Routes API
+# Routes
 @app.get("/")
 async def root():
-    return {"status": "ok", "service": "SecurMail API", "version": "2.0.0"}
+    return {"status": "ok", "service": "SecurMail API", "version": "2.6.0"}
 
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+    return {"status": "healthy"}
 
 
 @app.post("/api/audit")
 async def audit(request: AuditRequest):
-    """Lance un audit de sÃ©curitÃ© email."""
+    """Run email security audit."""
     return StreamingResponse(
-        run_audit(request.domain, request.skip_typo, request.check_hibp),
+        run_audit(request.domain, request.skip_typo, request.check_hibp, request.email),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -572,127 +546,20 @@ async def audit(request: AuditRequest):
 
 @app.get("/api/report/{domain}/pdf")
 async def get_pdf_report(domain: str):
-    """Télécharge le rapport PDF."""
+    """Download PDF report."""
     pdf_path = REPORTS_DIR / f"rapport_{domain}.pdf"
     
     if not pdf_path.exists():
-        raise HTTPException(status_code=404, detail="Rapport non trouvé")
+        raise HTTPException(status_code=404, detail="Report not found")
     
     return FileResponse(
         pdf_path,
         media_type="application/pdf",
-        filename=f"securmail_rapport_{domain}.pdf"
+        filename=f"securmail_report_{domain}.pdf"
     )
 
 
-@app.post("/api/generate-report")
-async def generate_report(request: GenerateReportRequest):
-    """Génère un rapport PDF avec Claude API."""
-    try:
-        # For now, return a simple placeholder PDF
-        # In production, integrate with Claude API and WeasyPrint/reportlab
-        
-        # Create a simple text file report (replace with actual PDF generation)
-        report_content = f"""
-SecurMail Security Report
-========================
-
-Domain: {request.domain}
-Score: {request.score}/100
-Report Type: {request.reportType}
-
-Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-Summary:
---------
-This is a free report analyzing your domain's email security configuration.
-
-For a comprehensive analysis, please request our Premium Report service.
-        """.encode('utf-8')
-        
-        return FileResponse(
-            io.BytesIO(report_content),
-            media_type="application/pdf",
-            filename=f"securmail_report_{request.domain}.pdf"
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/premium-request")
-async def submit_premium_request(request: PremiumRequestModel):
-    """Enregistre une demande de rapport premium."""
-    try:
-        # Send email to info@clicpomme.com
-        await send_premium_email(request)
-        
-        return {
-            "status": "success",
-            "message": "Premium request received",
-            "email": "info@clicpomme.com"
-        }
-    except Exception as e:
-        print(f"Error submitting premium request: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error processing request")
-
-
-async def send_premium_email(request: PremiumRequestModel):
-    """Envoie un email de demande premium à info@clicpomme.com."""
-    try:
-        # Configuration SMTP (à remplacer avec vos paramètres réels)
-        smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-        smtp_port = int(os.getenv("SMTP_PORT", "587"))
-        sender_email = os.getenv("SMTP_FROM", "noreply@clicpomme.com")
-        sender_password = os.getenv("SMTP_PASSWORD", "")
-        
-        # Create email
-        msg = MIMEMultipart()
-        msg['From'] = sender_email
-        msg['To'] = "info@clicpomme.com"
-        msg['Subject'] = f"Premium Report Request - {request.domain}"
-        
-        body = f"""
-Premium Security Report Request
-================================
-
-Client Information:
-- Name: {request.name}
-- Email: {request.email}
-- Company: {request.company}
-
-Analysis Details:
-- Domain: {request.domain}
-- Security Score: {request.score}/100
-- Client's Email: {request.userEmail}
-
-Additional Notes:
-{request.message if request.message else "No additional notes"}
-
----
-Please contact the client at {request.email} to discuss the premium report.
-        """
-        
-        msg.attach(MIMEText(body, 'plain'))
-        
-        # Send email (async wrapper around sync operation)
-        if smtp_server and sender_password:
-            try:
-                with smtplib.SMTP(smtp_server, smtp_port) as server:
-                    server.starttls()
-                    server.login(sender_email, sender_password)
-                    server.send_message(msg)
-            except Exception as e:
-                print(f"Email sending failed: {str(e)}")
-                # Don't fail the request even if email fails
-        else:
-            print("SMTP not configured, skipping email")
-            
-    except Exception as e:
-        print(f"Error in send_premium_email: {str(e)}")
-        # Don't raise, just log
-
-
-# Point d'entrée
+# Entry point
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
