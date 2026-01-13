@@ -344,7 +344,7 @@ async def check_hibp(domain: str) -> dict:
     """VÃ©rifie Have I Been Pwned."""
     result = {"check": "hibp", "found": False, "raw": "", "alert": None, "score": 0}
     
-    prefixes = ["contact", "info", "admin", "support", "rich"]
+    prefixes = ["contact", "info", "admin"]
     lines = []
     total_breaches = 0
     
@@ -383,7 +383,7 @@ async def check_hibp(domain: str) -> dict:
                 lines.append(f"  Erreur: {str(e)}")
             
             # Rate limit HIBP
-            await asyncio.sleep(1.6)
+            await asyncio.sleep(2.5)
     
     result["raw"] = "\n".join(lines)
     
