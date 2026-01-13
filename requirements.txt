@@ -1,8 +1,6 @@
 fastapi==0.104.1
 uvicorn==0.24.0
-python-dns==1.16.0
 dnspython==2.4.2
 httpx==0.25.0
 pydantic==2.5.0
 python-multipart==0.0.6
-dnstwist==20231018
