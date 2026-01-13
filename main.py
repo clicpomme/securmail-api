@@ -120,20 +120,20 @@ async def check_spf(domain: str) -> dict:
                     
                     # Analyser la qualitÃ©
                     if "-all" in line:
-                        result["score"] = 15
+                        result["score"] = 25
                         result["quality"] = "Strict (-all)"
                     elif "~all" in line:
-                        result["score"] = 10
+                        result["score"] = 0
                         result["quality"] = "Moderate (~all)"
                     elif "?all" in line:
-                        result["score"] = 5
+                        result["score"] = 0
                         result["quality"] = "Weak (?all)"
                     elif "+all" in line:
                         result["score"] = 0
                         result["quality"] = "Dangerous (+all)"
                         result["alert"] = "SPF avec +all permet Ã  tout le monde d'envoyer des emails!"
                     else:
-                        result["score"] = 12
+                        result["score"] = 25
                         result["quality"] = "Present"
                     
                     result["raw"] += f"\nQuality: {result['quality']}"
@@ -179,7 +179,7 @@ async def check_dkim(domain: str) -> dict:
     
     if found_selectors:
         result["found"] = True
-        result["score"] = 15
+        result["score"] = 25
         raw_lines.insert(0, f"Selectors found: {', '.join(found_selectors)}\n")
         result["raw"] = "\n".join(raw_lines)
     else:
@@ -202,17 +202,17 @@ async def check_dmarc(domain: str) -> dict:
             
             # Analyser la politique
             if "p=reject" in record:
-                result["score"] = 15
+                result["score"] = 25
                 result["policy"] = "Reject (strict)"
             elif "p=quarantine" in record:
-                result["score"] = 12
+                result["score"] = 25
                 result["policy"] = "Quarantine (moderate)"
             elif "p=none" in record:
-                result["score"] = 5
+                result["score"] = 0
                 result["policy"] = "None (monitoring)"
                 result["alert"] = "DMARC in monitoring mode (p=none) - no active protection"
             else:
-                result["score"] = 10
+                result["score"] = 0
                 result["policy"] = "Present"
             
             result["raw"] += f"\nPolitique: {result['policy']}"
@@ -240,7 +240,7 @@ async def check_bimi(domain: str) -> dict:
     
     if record:
         result["found"] = True
-        result["score"] = 10
+        result["score"] = 0
         result["raw"] = record.replace('"', '')
         
         if "l=" in record:
@@ -260,7 +260,7 @@ async def check_mtasts(domain: str) -> dict:
     # Enregistrement DNS
     record = dns_query(domain, "TXT", "_mta-sts")
     if record:
-        result["score"] += 8
+        result["score"] = 0
         lines.append("[DNS MTA-STS]")
         lines.append(record.replace('"', ''))
         lines.append("")
@@ -274,7 +274,7 @@ async def check_mtasts(domain: str) -> dict:
         async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
             response = await client.get(f"https://mta-sts.{domain}/.well-known/mta-sts.txt")
             if response.status_code == 200:
-                result["score"] += 7
+                result["score"] = 0
                 result["found"] = True
                 lines.append("[Politique HTTPS]")
                 lines.append(response.text[:500])
@@ -301,7 +301,7 @@ async def check_tlsrpt(domain: str) -> dict:
     
     if record:
         result["found"] = True
-        result["score"] = 15
+        result["score"] = 25
         result["raw"] = record.replace('"', '')
     else:
         result["raw"] = "Aucun enregistrement TLS-RPT trouvÃ©"
@@ -317,7 +317,7 @@ async def check_dnssec(domain: str) -> dict:
     
     if dnskey:
         result["found"] = True
-        result["score"] = 5
+        result["score"] = 0
         result["raw"] = "DNSSEC activÃ© âœ“\n\n" + dnskey[:300]
     else:
         result["raw"] = "DNSSEC non activÃ©\n(RecommandÃ© pour protÃ©ger contre l'usurpation DNS)"
@@ -333,7 +333,7 @@ async def check_caa(domain: str) -> dict:
     
     if record:
         result["found"] = True
-        result["score"] = 5
+        result["score"] = 0
         result["raw"] = record
     else:
         result["raw"] = "Aucun enregistrement CAA trouvÃ©\n(RecommandÃ© pour limiter les CA autorisÃ©es)"
@@ -413,7 +413,7 @@ async def check_hibp(domain: str, custom_email: Optional[str] = None) -> dict:
     
     if total_breaches > 0:
         result["found"] = True
-        result["score"] = 20
+        result["score"] = 0
         result["alert"] = f"Email found in {total_breaches} data breach(es)"
     
     return result
@@ -439,7 +439,7 @@ async def check_typosquatting(domain: str) -> dict:
             
             if registered:
                 result["found"] = True
-                result["score"] = 15
+                result["score"] = 25
                 
                 lines = [f"Similar registered domains: {len(registered)}\n"]
                 for d in registered[:20]:  # Limiter Ã  20
@@ -560,7 +560,7 @@ async def health():
 async def audit(request: AuditRequest):
     """Lance un audit de sÃ©curitÃ© email."""
     return StreamingResponse(
-        run_audit(request.domain, request.skip_typo, request.check_hibp, request.email),
+        run_audit(request.domain, request.skip_typo, request.check_hibp),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
