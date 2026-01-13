@@ -342,24 +342,20 @@ async def check_caa(domain: str) -> dict:
 
 
 async def check_hibp(domain: str, custom_email: Optional[str] = None) -> dict:
-    """Check Have I Been Pwned for compromised emails."""
+    """Check Have I Been Pwned for a specific email."""
     result = {"check": "hibp", "found": False, "raw": "", "alert": None, "score": 0}
     
-    # Prepare email list
-    prefixes = ["contact", "info", "admin", "support"]
-    if custom_email:
-        # If custom email provided, test it first
-        emails = [custom_email] + [f"{p}@{domain}" for p in prefixes]
-    else:
-        emails = [f"{p}@{domain}" for p in prefixes]
+    # If custom email provided, check ONLY that email
+    if not custom_email:
+        result["raw"] = "No email provided for breach checking"
+        return result
     
+    email = custom_email
     lines = []
     total_breaches = 0
     
-    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
-        for email in emails:
-            lines.append(f"\nâ†’ {email}:")
-            
+    try:
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
             try:
                 response = await client.get(
                     f"https://haveibeenpwned.com/api/v3/breachedaccount/{email}",
@@ -372,34 +368,55 @@ async def check_hibp(domain: str, custom_email: Optional[str] = None) -> dict:
                 
                 if response.status_code == 200:
                     breaches = response.json()
-                    breach_names = [b["Name"] for b in breaches]
-                    total_breaches += len(breaches)
-                    lines.append(f"  âš  Found in {len(breaches)} fuite(s): {', '.join(breach_names[:5])}")
+                    total_breaches = len(breaches)
+                    
+                    lines.append(f"Email: {email}")
+                    lines.append(f"Status: Found in {total_breaches} breach(es)")
+                    lines.append("")
+                    lines.append("Breach sources:")
+                    for breach in breaches[:10]:
+                        breach_name = breach.get("Name", "Unknown")
+                        breach_date = breach.get("BreachDate", "Unknown date")
+                        breach_count = breach.get("PwnCount", 0)
+                        lines.append(f"  • {breach_name} ({breach_date}) - {breach_count:,} records")
+                    
+                    if len(breaches) > 10:
+                        lines.append(f"")
+                        lines.append(f"  ... and {len(breaches) - 10} more breaches")
+                    
                 elif response.status_code == 404:
-                    lines.append("  âœ“ No known breaches")
+                    lines.append(f"Email: {email}")
+                    lines.append("Status: No known breaches found")
+                    
                 elif response.status_code == 401:
-                    lines.append("  Error: clÃ© API invalide")
-                    break
+                    lines.append("Error: Invalid HIBP API key")
+                    result["alert"] = "HIBP API key validation failed"
+                    
                 elif response.status_code == 429:
-                    lines.append("  Error: limite de requÃªtes atteinte")
-                    break
+                    lines.append("Error: HIBP rate limit exceeded")
+                    lines.append("Please try again in a few minutes")
+                    result["alert"] = "HIBP rate limit exceeded. Please try again later"
+                    
                 else:
-                    lines.append(f"  Erreur HTTP {response.status_code}")
+                    lines.append(f"Error: HTTP {response.status_code}")
+                    result["alert"] = f"HIBP service error: HTTP {response.status_code}"
                     
             except Exception as e:
-                lines.append(f"  Error: {str(e)}")
-            
-            # Rate limit HIBP
-            await asyncio.sleep(1.6)
+                lines.append(f"Error: {str(e)}")
+                result["alert"] = f"Error checking email: {str(e)}"
+    
+    except Exception as e:
+        lines.append(f"Error: {str(e)}")
+        result["alert"] = f"Error: {str(e)}"
     
     result["raw"] = "\n".join(lines)
     
     if total_breaches > 0:
-        result["found"] = True  # found = problÃ¨me trouvÃ©
-        result["alert"] = f"{total_breaches} breach(es) detected"
+        result["found"] = True
+        result["score"] = 20
+        result["alert"] = f"Email found in {total_breaches} data breach(es)"
     
     return result
-
 
 async def check_typosquatting(domain: str) -> dict:
     """VÃ©rifie le typosquatting avec dnstwist."""
