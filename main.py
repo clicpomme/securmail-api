@@ -46,9 +46,9 @@ app.add_middleware(
         "https://www.clicpomme.com",
         "http://localhost:8000",
         "http://127.0.0.1:8000",
-        "*",  # Accept all origins (debug mode)
+        "*",  # Accept all origins
     ],
-    allow_credentials=True,
+    allow_credentials=False,  # Doit être False avec "*"
     allow_methods=["*"],
     allow_headers=["*"],
 )
