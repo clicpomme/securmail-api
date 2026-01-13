@@ -53,6 +53,7 @@ app.add_middleware(
 # ModÃ¨les
 class AuditRequest(BaseModel):
     domain: str
+    email: Optional[str] = None
     skip_typo: bool = False
     check_hibp: bool = True
 
@@ -123,26 +124,26 @@ async def check_spf(domain: str) -> dict:
                         result["quality"] = "Strict (-all)"
                     elif "~all" in line:
                         result["score"] = 10
-                        result["quality"] = "ModÃ©rÃ© (~all)"
+                        result["quality"] = "Moderate (~all)"
                     elif "?all" in line:
                         result["score"] = 5
-                        result["quality"] = "Faible (?all)"
+                        result["quality"] = "Weak (?all)"
                     elif "+all" in line:
                         result["score"] = 0
-                        result["quality"] = "Dangereux (+all)"
+                        result["quality"] = "Dangerous (+all)"
                         result["alert"] = "SPF avec +all permet Ã  tout le monde d'envoyer des emails!"
                     else:
                         result["score"] = 12
-                        result["quality"] = "PrÃ©sent"
+                        result["quality"] = "Present"
                     
-                    result["raw"] += f"\nQualitÃ©: {result['quality']}"
+                    result["raw"] += f"\nQuality: {result['quality']}"
                     break
         
         if not result["found"]:
-            result["raw"] = "Aucun enregistrement SPF trouvÃ©"
-            result["alert"] = "Aucun enregistrement SPF dÃ©tectÃ©"
+            result["raw"] = "No SPF records found"
+            result["alert"] = "No SPF records detected"
     except Exception as e:
-        result["raw"] = f"Erreur: {str(e)}"
+        result["raw"] = f"Error: {str(e)}"
         result["alert"] = "Erreur lors de la vÃ©rification SPF"
     
     return result
@@ -179,11 +180,11 @@ async def check_dkim(domain: str) -> dict:
     if found_selectors:
         result["found"] = True
         result["score"] = 15
-        raw_lines.insert(0, f"SÃ©lecteurs trouvÃ©s: {', '.join(found_selectors)}\n")
+        raw_lines.insert(0, f"Selectors found: {', '.join(found_selectors)}\n")
         result["raw"] = "\n".join(raw_lines)
     else:
-        result["raw"] = "Aucun enregistrement DKIM dÃ©tectÃ©\n(SÃ©lecteurs testÃ©s: default, google, selector1, selector2, etc.)"
-        result["alert"] = "Aucun enregistrement DKIM dÃ©tectÃ©"
+        result["raw"] = "No DKIM records detected\n(Selectors tested: default, google, selector1, selector2, etc.)"
+        result["alert"] = "No DKIM records detected"
     
     return result
 
@@ -205,14 +206,14 @@ async def check_dmarc(domain: str) -> dict:
                 result["policy"] = "Reject (strict)"
             elif "p=quarantine" in record:
                 result["score"] = 12
-                result["policy"] = "Quarantine (modÃ©rÃ©)"
+                result["policy"] = "Quarantine (moderate)"
             elif "p=none" in record:
                 result["score"] = 5
-                result["policy"] = "None (surveillance)"
-                result["alert"] = "DMARC en mode surveillance (p=none) - pas de protection active"
+                result["policy"] = "None (monitoring)"
+                result["alert"] = "DMARC in monitoring mode (p=none) - no active protection"
             else:
                 result["score"] = 10
-                result["policy"] = "PrÃ©sent"
+                result["policy"] = "Present"
             
             result["raw"] += f"\nPolitique: {result['policy']}"
             
@@ -221,12 +222,12 @@ async def check_dmarc(domain: str) -> dict:
             if pct_match:
                 pct = int(pct_match.group(1))
                 if pct < 100:
-                    result["raw"] += f"\nâš  Attention: seulement {pct}% des messages couverts"
+                    result["raw"] += f"\nâš  Warning: Only {pct}% of messages covered"
         else:
-            result["raw"] = "Aucun enregistrement DMARC trouvÃ©"
-            result["alert"] = "Aucun enregistrement DMARC dÃ©tectÃ©"
+            result["raw"] = "No DMARC records found"
+            result["alert"] = "No DMARC records detected"
     except Exception as e:
-        result["raw"] = f"Erreur: {str(e)}"
+        result["raw"] = f"Error: {str(e)}"
     
     return result
 
@@ -245,7 +246,7 @@ async def check_bimi(domain: str) -> dict:
         if "l=" in record:
             result["raw"] += "\nâœ“ Logo BIMI configurÃ©"
     else:
-        result["raw"] = "Aucun enregistrement BIMI trouvÃ©\n(Optionnel - amÃ©liore la visibilitÃ© de marque)"
+        result["raw"] = "No BIMI records found\n(Optionnel - amÃ©liore la visibilitÃ© de marque)"
     
     return result
 
@@ -340,17 +341,23 @@ async def check_caa(domain: str) -> dict:
     return result
 
 
-async def check_hibp(domain: str) -> dict:
-    """VÃ©rifie Have I Been Pwned."""
+async def check_hibp(domain: str, custom_email: Optional[str] = None) -> dict:
+    """Check Have I Been Pwned for compromised emails."""
     result = {"check": "hibp", "found": False, "raw": "", "alert": None, "score": 0}
     
+    # Prepare email list
     prefixes = ["contact", "info", "admin", "support"]
+    if custom_email:
+        # If custom email provided, test it first
+        emails = [custom_email] + [f"{p}@{domain}" for p in prefixes]
+    else:
+        emails = [f"{p}@{domain}" for p in prefixes]
+    
     lines = []
     total_breaches = 0
     
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
-        for prefix in prefixes:
-            email = f"{prefix}@{domain}"
+        for email in emails:
             lines.append(f"\nâ†’ {email}:")
             
             try:
@@ -367,20 +374,20 @@ async def check_hibp(domain: str) -> dict:
                     breaches = response.json()
                     breach_names = [b["Name"] for b in breaches]
                     total_breaches += len(breaches)
-                    lines.append(f"  âš  TrouvÃ© dans {len(breaches)} fuite(s): {', '.join(breach_names[:5])}")
+                    lines.append(f"  âš  Found in {len(breaches)} fuite(s): {', '.join(breach_names[:5])}")
                 elif response.status_code == 404:
-                    lines.append("  âœ“ Aucune fuite connue")
+                    lines.append("  âœ“ No known breaches")
                 elif response.status_code == 401:
-                    lines.append("  Erreur: clÃ© API invalide")
+                    lines.append("  Error: clÃ© API invalide")
                     break
                 elif response.status_code == 429:
-                    lines.append("  Erreur: limite de requÃªtes atteinte")
+                    lines.append("  Error: limite de requÃªtes atteinte")
                     break
                 else:
                     lines.append(f"  Erreur HTTP {response.status_code}")
                     
             except Exception as e:
-                lines.append(f"  Erreur: {str(e)}")
+                lines.append(f"  Error: {str(e)}")
             
             # Rate limit HIBP
             await asyncio.sleep(1.6)
@@ -389,7 +396,7 @@ async def check_hibp(domain: str) -> dict:
     
     if total_breaches > 0:
         result["found"] = True  # found = problÃ¨me trouvÃ©
-        result["alert"] = f"{total_breaches} fuite(s) de donnÃ©es dÃ©tectÃ©e(s)"
+        result["alert"] = f"{total_breaches} breach(es) detected"
     
     return result
 
@@ -417,7 +424,7 @@ async def check_typosquatting(domain: str) -> dict:
                 result["found"] = True
                 result["score"] = 15
                 
-                lines = [f"Domaines similaires enregistrÃ©s: {len(registered)}\n"]
+                lines = [f"Similar registered domains: {len(registered)}\n"]
                 for d in registered[:20]:  # Limiter Ã  20
                     line = f"â€¢ {d.get('domain', 'N/A')} ({d.get('fuzzer', '')})"
                     if d.get('dns_a'):
@@ -430,42 +437,47 @@ async def check_typosquatting(domain: str) -> dict:
                 result["raw"] = "\n".join(lines)
                 
                 if len(registered) > 10:
-                    result["alert"] = f"{len(registered)} domaines similaires dÃ©tectÃ©s - risque Ã©levÃ©"
+                    result["alert"] = f"{len(registered)} similar domains detected - high risk"
             else:
-                result["raw"] = "Aucun domaine similaire enregistrÃ© dÃ©tectÃ©"
+                result["raw"] = "No similar registered domains detected"
         else:
             result["raw"] = f"Erreur dnstwist: {stderr.decode()}"
             
     except asyncio.TimeoutError:
         result["raw"] = "Timeout - l'analyse typosquatting a pris trop de temps"
     except FileNotFoundError:
-        result["raw"] = "dnstwist non disponible sur ce serveur"
+        result["raw"] = "dnstwist not available on this server"
     except Exception as e:
-        result["raw"] = f"Erreur: {str(e)}"
+        result["raw"] = f"Error: {str(e)}"
     
     return result
 
 
-async def run_audit(domain: str, skip_typo: bool, check_hibp_flag: bool) -> AsyncGenerator[str, None]:
+async def run_audit(domain: str, skip_typo: bool, check_hibp_flag: bool, custom_email: Optional[str] = None) -> AsyncGenerator[str, None]:
     """ExÃ©cute l'audit complet avec streaming."""
     
     total_score = 0
     results = {}
     
-    # Liste des checks
+    # Core checks
     checks = [
         ("spf", check_spf),
         ("dkim", check_dkim),
         ("dmarc", check_dmarc),
         ("bimi", check_bimi),
+    ]
+    
+    # Optional checks
+    optional_checks = [
         ("mtasts", check_mtasts),
         ("tlsrpt", check_tlsrpt),
         ("dnssec", check_dnssec),
         ("caa", check_caa),
     ]
+    checks.extend(optional_checks)
     
     if check_hibp_flag:
-        checks.append(("hibp", check_hibp))
+        checks.append(("hibp", lambda domain=domain, email=custom_email: check_hibp(domain, email)))
     
     if not skip_typo:
         checks.append(("typosquatting", check_typosquatting))
