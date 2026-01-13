@@ -119,10 +119,10 @@ async def check_spf(domain: str) -> dict:
                     
                     # Analyser la qualitÃ©
                     if "-all" in line:
-                        result["score"] = 15
+                        result["score"] = 25
                         result["quality"] = "Strict (-all)"
                     elif "~all" in line:
-                        result["score"] = 10
+                        result["score"] = 25
                         result["quality"] = "ModÃ©rÃ© (~all)"
                     elif "?all" in line:
                         result["score"] = 5
@@ -201,18 +201,18 @@ async def check_dmarc(domain: str) -> dict:
             
             # Analyser la politique
             if "p=reject" in record:
-                result["score"] = 15
+                result["score"] = 25
                 result["policy"] = "Reject (strict)"
             elif "p=quarantine" in record:
-                result["score"] = 12
-                result["policy"] = "Quarantine (modÃ©rÃ©)"
+                result["score"] = 25
+                result["policy"] = "Quarantine (modere)"
             elif "p=none" in record:
-                result["score"] = 5
+                result["score"] = 0
                 result["policy"] = "None (surveillance)"
                 result["alert"] = "DMARC en mode surveillance (p=none) - pas de protection active"
             else:
-                result["score"] = 10
-                result["policy"] = "PrÃ©sent"
+                result["score"] = 20
+                result["policy"] = "Present"
             
             result["raw"] += f"\nPolitique: {result['policy']}"
             
@@ -239,7 +239,7 @@ async def check_bimi(domain: str) -> dict:
     
     if record:
         result["found"] = True
-        result["score"] = 10
+        result["score"] = 25
         result["raw"] = record.replace('"', '')
         
         if "l=" in record:
