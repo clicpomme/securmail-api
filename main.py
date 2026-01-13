@@ -207,7 +207,7 @@ async def check_dmarc(domain: str) -> dict:
                 result["score"] = 25
                 result["policy"] = "Quarantine (modere)"
             elif "p=none" in record:
-                result["score"] = 0
+                result["score"] = 25
                 result["policy"] = "None (surveillance)"
                 result["alert"] = "DMARC en mode surveillance (p=none) - pas de protection active"
             else:
@@ -344,7 +344,7 @@ async def check_hibp(domain: str) -> dict:
     """VÃ©rifie Have I Been Pwned."""
     result = {"check": "hibp", "found": False, "raw": "", "alert": None, "score": 0}
     
-    prefixes = ["contact", "info", "admin", "support"]
+    prefixes = ["contact", "info", "admin", "support", "rich"]
     lines = []
     total_breaches = 0
     
