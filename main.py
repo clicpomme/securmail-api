@@ -178,7 +178,7 @@ async def check_dkim(domain: str) -> dict:
     
     if found_selectors:
         result["found"] = True
-        result["score"] = 15
+        result["score"] = 25
         raw_lines.insert(0, f"SÃ©lecteurs trouvÃ©s: {', '.join(found_selectors)}\n")
         result["raw"] = "\n".join(raw_lines)
     else:
@@ -388,8 +388,11 @@ async def check_hibp(domain: str) -> dict:
     result["raw"] = "\n".join(lines)
     
     if total_breaches > 0:
-        result["found"] = True  # found = problÃ¨me trouvÃ©
-        result["alert"] = f"{total_breaches} fuite(s) de donnÃ©es dÃ©tectÃ©e(s)"
+        result["found"] = True
+        result["alert"] = f"{total_breaches} data breach(es) detected"
+        result["score"] = 0
+    else:
+        result["score"] = 15
     
     return result
 
@@ -469,6 +472,8 @@ async def run_audit(domain: str, skip_typo: bool, check_hibp_flag: bool) -> Asyn
     checks = [c for c in checks if c is not None]
     
     # ExÃ©cuter chaque check
+    scoring_checks = {"spf", "dkim", "dmarc", "bimi"}  # Seulement ces 4 pour le score
+    
     for check_name, check_func in checks:
         # Progress: running
         yield f"data: {json.dumps({'type': 'progress', 'check': check_name, 'status': 'running'})}\n\n"
@@ -476,7 +481,10 @@ async def run_audit(domain: str, skip_typo: bool, check_hibp_flag: bool) -> Asyn
         try:
             result = await check_func(domain)
             results[check_name] = result
-            total_score += result.get("score", 0)
+            
+            # Ajouter au score SEULEMENT si c'est SPF, DKIM, DMARC ou BIMI
+            if check_name in scoring_checks:
+                total_score += result.get("score", 0)
             
             # Progress: done
             yield f"data: {json.dumps({'type': 'progress', 'check': check_name, 'status': 'done'})}\n\n"
@@ -488,7 +496,7 @@ async def run_audit(domain: str, skip_typo: bool, check_hibp_flag: bool) -> Asyn
             yield f"data: {json.dumps({'type': 'progress', 'check': check_name, 'status': 'error'})}\n\n"
             yield f"data: {json.dumps({'type': 'result', 'check': check_name, 'data': {'found': False, 'raw': str(e), 'alert': 'Erreur'}})}\n\n"
     
-    # Plafonner le score
+    # Plafonner le score a 100
     total_score = min(total_score, 100)
     
     # Score final
