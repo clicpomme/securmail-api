@@ -26,11 +26,15 @@ import httpx
 import re
 
 # Configuration
-HIBP_API_KEY = os.getenv("HIBP_API_KEY", "2a1fbd560278460290efbb182bc7253b")
+HIBP_API_KEY = os.getenv("HIBP_API_KEY")
 DNS_TIMEOUT = 5
 HTTP_TIMEOUT = 10
 REPORTS_DIR = Path("/tmp/securmail_reports")
 REPORTS_DIR.mkdir(exist_ok=True)
+
+# Validate required environment variables
+if not HIBP_API_KEY:
+    print("WARNING: HIBP_API_KEY not set - Data breach checks will fail")
 
 # FastAPI app
 app = FastAPI(
