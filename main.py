@@ -56,7 +56,7 @@ app.add_middleware(
 
 # Models
 class AuditRequest(BaseModel):
-    domain: str
+    domain: Optional[str] = None  # Optional domain for email security check
     email: Optional[str] = None  # Optional email for HIBP check
     skip_typo: bool = True  # Default to skip (too slow)
     check_hibp: bool = True
@@ -64,6 +64,8 @@ class AuditRequest(BaseModel):
     @field_validator('domain')
     @classmethod
     def validate_domain(cls, v):
+        if v is None or v == '':
+            return None
         v = v.strip().lower()
         pattern = r'^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z]{2,})+$'
         if not re.match(pattern, v):
@@ -445,39 +447,40 @@ async def check_typosquatting(domain: str) -> dict:
     return result
 
 
-async def run_audit(domain: str, email: Optional[str], skip_typo: bool, check_hibp_flag: bool) -> AsyncGenerator[str, None]:
+async def run_audit(domain: Optional[str], email: Optional[str], skip_typo: bool, check_hibp_flag: bool) -> AsyncGenerator[str, None]:
     """Run complete audit with streaming."""
     
     total_score = 0
     results = {}
     
-    # Domain checks (score only from SPF, DKIM, DMARC, BIMI)
-    domain_checks = [
-        ("spf", check_spf),
-        ("dkim", check_dkim),
-        ("dmarc", check_dmarc),
-        ("bimi", check_bimi),
-        ("mtasts", check_mtasts),
-        ("tlsrpt", check_tlsrpt),
-        ("dnssec", check_dnssec),
-        ("caa", check_caa),
-    ]
-    
-    # Execute domain checks
-    for check_name, check_func in domain_checks:
-        yield f"data: {json.dumps({'type': 'progress', 'check': check_name, 'status': 'running'})}\n\n"
+    # Domain checks (only if domain provided)
+    if domain:
+        domain_checks = [
+            ("spf", check_spf),
+            ("dkim", check_dkim),
+            ("dmarc", check_dmarc),
+            ("bimi", check_bimi),
+            ("mtasts", check_mtasts),
+            ("tlsrpt", check_tlsrpt),
+            ("dnssec", check_dnssec),
+            ("caa", check_caa),
+        ]
         
-        try:
-            result = await check_func(domain)
-            results[check_name] = result
-            total_score += result.get("score", 0)
+        # Execute domain checks
+        for check_name, check_func in domain_checks:
+            yield f"data: {json.dumps({'type': 'progress', 'check': check_name, 'status': 'running'})}\n\n"
             
-            yield f"data: {json.dumps({'type': 'progress', 'check': check_name, 'status': 'done'})}\n\n"
-            yield f"data: {json.dumps({'type': 'result', 'check': check_name, 'data': result})}\n\n"
-            
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'progress', 'check': check_name, 'status': 'error'})}\n\n"
-            yield f"data: {json.dumps({'type': 'result', 'check': check_name, 'data': {'found': False, 'raw': str(e), 'alert': 'Error'}})}\n\n"
+            try:
+                result = await check_func(domain)
+                results[check_name] = result
+                total_score += result.get("score", 0)
+                
+                yield f"data: {json.dumps({'type': 'progress', 'check': check_name, 'status': 'done'})}\n\n"
+                yield f"data: {json.dumps({'type': 'result', 'check': check_name, 'data': result})}\n\n"
+                
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'progress', 'check': check_name, 'status': 'error'})}\n\n"
+                yield f"data: {json.dumps({'type': 'result', 'check': check_name, 'data': {'found': False, 'raw': str(e), 'alert': 'Error'}})}\n\n"
     
     # HIBP check (only if email provided)
     if check_hibp_flag and email:
@@ -494,8 +497,8 @@ async def run_audit(domain: str, email: Optional[str], skip_typo: bool, check_hi
             yield f"data: {json.dumps({'type': 'progress', 'check': 'hibp', 'status': 'error'})}\n\n"
             yield f"data: {json.dumps({'type': 'result', 'check': 'hibp', 'data': {'found': False, 'raw': str(e), 'alert': 'Error'}})}\n\n"
     
-    # Typosquatting check (optional, slow)
-    if not skip_typo:
+    # Typosquatting check (optional, slow, only if domain provided)
+    if domain and not skip_typo:
         yield f"data: {json.dumps({'type': 'progress', 'check': 'typosquatting', 'status': 'running'})}\n\n"
         
         try:
@@ -512,11 +515,12 @@ async def run_audit(domain: str, email: Optional[str], skip_typo: bool, check_hi
     # Cap score at 100
     total_score = min(total_score, 100)
     
-    # Final score
-    yield f"data: {json.dumps({'type': 'score', 'domain': domain, 'score': total_score})}\n\n"
+    # Final score (only if domain was checked)
+    if domain:
+        yield f"data: {json.dumps({'type': 'score', 'domain': domain, 'score': total_score})}\n\n"
     
     # Complete
-    yield f"data: {json.dumps({'type': 'complete', 'domain': domain, 'score': total_score, 'pdf_url': None})}\n\n"
+    yield f"data: {json.dumps({'type': 'complete', 'domain': domain, 'email': email, 'score': total_score, 'pdf_url': None})}\n\n"
 
 
 # API Routes
@@ -533,6 +537,10 @@ async def health():
 @app.post("/api/audit")
 async def audit(request: AuditRequest):
     """Launch email security audit."""
+    # Validate at least one field is provided
+    if not request.domain and not request.email:
+        raise HTTPException(status_code=400, detail="Please provide a domain or an email address")
+    
     return StreamingResponse(
         run_audit(request.domain, request.email, request.skip_typo, request.check_hibp),
         media_type="text/event-stream",
