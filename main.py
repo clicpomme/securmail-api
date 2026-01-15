@@ -167,7 +167,8 @@ async def check_dkim(domain: str) -> dict:
         "amazonses", "ses",
         "protonmail", "protonmail2", "protonmail3",
         "mailjet", "dkim1", "dkim2",
-        "hornet", "mimecast", "fm1", "fm2", "fm3"
+        "hornet", "hse", "hse1", "hse2",  # Hornet Security
+        "mimecast", "fm1", "fm2", "fm3"
     ]
     
     found_selectors = []
