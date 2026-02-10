@@ -1,6 +1,11 @@
 """
-SecurMail API v2.8 - Backend pour l'audit de securite email
+SecurMail API v2.9 - Backend pour l'audit de securite email
 45 Nord Sec
+
+Changes in v2.9:
+- Added MX records check (mail servers)
+- Added NS records check (DNS hosting)
+- BIMI Logo Generator in frontend (no backend changes needed)
 
 Changes in v2.8:
 - HIBP checks ONLY the user-provided email (not generic domain emails)
@@ -40,7 +45,7 @@ if not HIBP_API_KEY:
 app = FastAPI(
     title="SecurMail API",
     description="API d'audit de securite email par 45 Nord Sec",
-    version="2.8.0"
+    version="2.9.0"
 )
 
 # CORS
@@ -339,6 +344,191 @@ async def check_caa(domain: str) -> dict:
     return result
 
 
+async def check_mx(domain: str) -> dict:
+    """Check MX records (mail servers)."""
+    result = {"check": "mx", "found": False, "raw": "", "alert": None, "score": 0}
+    
+    try:
+        resolver = dns.resolver.Resolver()
+        resolver.timeout = DNS_TIMEOUT
+        resolver.lifetime = DNS_TIMEOUT
+        
+        answers = resolver.resolve(domain, "MX")
+        
+        mx_records = []
+        for rdata in answers:
+            priority = rdata.preference
+            mail_server = str(rdata.exchange).rstrip('.')
+            mx_records.append((priority, mail_server))
+        
+        # Sort by priority
+        mx_records.sort(key=lambda x: x[0])
+        
+        if mx_records:
+            result["found"] = True
+            lines = ["Mail Servers (MX Records):\n"]
+            
+            for priority, server in mx_records:
+                # Identify common providers
+                provider = identify_mail_provider(server)
+                provider_info = f" [{provider}]" if provider else ""
+                lines.append(f"  Priority {priority}: {server}{provider_info}")
+            
+            result["raw"] = "\n".join(lines)
+        else:
+            result["raw"] = "No MX records found"
+            result["alert"] = "No mail servers configured for this domain"
+            
+    except dns.resolver.NXDOMAIN:
+        result["raw"] = "Domain does not exist"
+        result["alert"] = "Domain not found"
+    except dns.resolver.NoAnswer:
+        result["raw"] = "No MX records found"
+        result["alert"] = "No mail servers configured"
+    except Exception as e:
+        result["raw"] = f"Error: {str(e)}"
+    
+    return result
+
+
+def identify_mail_provider(mx_server: str) -> str:
+    """Identify common email providers from MX server hostname."""
+    mx_lower = mx_server.lower()
+    
+    providers = {
+        "google.com": "Google Workspace",
+        "googlemail.com": "Google Workspace",
+        "outlook.com": "Microsoft 365",
+        "protection.outlook.com": "Microsoft 365",
+        "pphosted.com": "Proofpoint",
+        "mimecast": "Mimecast",
+        "messagelabs": "Symantec",
+        "barracuda": "Barracuda",
+        "sophos": "Sophos",
+        "forcepoint": "Forcepoint",
+        "spamexperts": "SpamExperts",
+        "zoho.com": "Zoho Mail",
+        "yahoodns.net": "Yahoo Mail",
+        "icloud.com": "Apple iCloud",
+        "secureserver.net": "GoDaddy",
+        "emailsrvr.com": "Rackspace",
+        "mailgun.org": "Mailgun",
+        "sendgrid.net": "SendGrid",
+        "amazonses.com": "Amazon SES",
+        "postmarkapp.com": "Postmark",
+        "mailchimp.com": "Mailchimp",
+        "ovh.net": "OVH",
+        "gandi.net": "Gandi",
+        "ionos": "IONOS",
+        "hostinger": "Hostinger",
+        "namecheap": "Namecheap",
+        "titan.email": "Titan",
+        "migadu.com": "Migadu",
+        "fastmail": "Fastmail",
+        "protonmail.ch": "ProtonMail",
+        "tutanota": "Tutanota",
+        "hornetsecurity": "Hornet Security",
+        "hornetdrive": "Hornet Security",
+    }
+    
+    for pattern, provider in providers.items():
+        if pattern in mx_lower:
+            return provider
+    
+    return ""
+
+
+async def check_ns(domain: str) -> dict:
+    """Check NS records (DNS hosting)."""
+    result = {"check": "ns", "found": False, "raw": "", "alert": None, "score": 0}
+    
+    try:
+        resolver = dns.resolver.Resolver()
+        resolver.timeout = DNS_TIMEOUT
+        resolver.lifetime = DNS_TIMEOUT
+        
+        answers = resolver.resolve(domain, "NS")
+        
+        ns_records = []
+        for rdata in answers:
+            ns_server = str(rdata.target).rstrip('.')
+            ns_records.append(ns_server)
+        
+        if ns_records:
+            result["found"] = True
+            lines = ["DNS Nameservers:\n"]
+            
+            # Identify DNS provider from first NS
+            dns_provider = identify_dns_provider(ns_records[0])
+            if dns_provider:
+                lines.append(f"  Provider: {dns_provider}\n")
+            
+            for ns in ns_records:
+                lines.append(f"  {ns}")
+            
+            result["raw"] = "\n".join(lines)
+        else:
+            result["raw"] = "No NS records found"
+            result["alert"] = "No nameservers found"
+            
+    except dns.resolver.NXDOMAIN:
+        result["raw"] = "Domain does not exist"
+        result["alert"] = "Domain not found"
+    except dns.resolver.NoAnswer:
+        result["raw"] = "No NS records found"
+    except Exception as e:
+        result["raw"] = f"Error: {str(e)}"
+    
+    return result
+
+
+def identify_dns_provider(ns_server: str) -> str:
+    """Identify common DNS providers from nameserver hostname."""
+    ns_lower = ns_server.lower()
+    
+    providers = {
+        "cloudflare.com": "Cloudflare",
+        "awsdns": "Amazon Route 53",
+        "azure-dns": "Microsoft Azure DNS",
+        "googledomains.com": "Google Domains",
+        "google.com": "Google Cloud DNS",
+        "domaincontrol.com": "GoDaddy",
+        "godaddy.com": "GoDaddy",
+        "registrar-servers.com": "Namecheap",
+        "dns.com": "DNS.com",
+        "nsone.net": "NS1",
+        "ultradns": "UltraDNS",
+        "dynect.net": "Dyn",
+        "ovh.net": "OVH",
+        "gandi.net": "Gandi",
+        "hostinger": "Hostinger",
+        "digitalocean.com": "DigitalOcean",
+        "linode.com": "Linode",
+        "vultr.com": "Vultr",
+        "hetzner": "Hetzner",
+        "ionos": "IONOS",
+        "namecheap": "Namecheap",
+        "name.com": "Name.com",
+        "dnsimple.com": "DNSimple",
+        "easydns.com": "easyDNS",
+        "dnsmadeeasy.com": "DNS Made Easy",
+        "rage4.com": "Rage4",
+        "constellix.com": "Constellix",
+        "netlify.com": "Netlify",
+        "vercel-dns.com": "Vercel",
+        "wixdns.net": "Wix",
+        "squarespace": "Squarespace",
+        "shopify.com": "Shopify",
+        "wordpress.com": "WordPress.com",
+    }
+    
+    for pattern, provider in providers.items():
+        if pattern in ns_lower:
+            return provider
+    
+    return ""
+
+
 async def check_hibp(email: str) -> dict:
     """Check Have I Been Pwned for a SINGLE email address."""
     result = {"check": "hibp", "found": False, "raw": "", "alert": None, "score": 0}
@@ -461,6 +651,8 @@ async def run_audit(domain: Optional[str], email: Optional[str], skip_typo: bool
     # Domain checks (only if domain provided)
     if domain:
         domain_checks = [
+            ("mx", check_mx),
+            ("ns", check_ns),
             ("spf", check_spf),
             ("dkim", check_dkim),
             ("dmarc", check_dmarc),
