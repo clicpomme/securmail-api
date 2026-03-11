@@ -45,7 +45,7 @@ if not HIBP_API_KEY:
 app = FastAPI(
     title="SecurMail API",
     description="API d'audit de securite email par 45 Nord Sec",
-    version="2.9.0"
+    version="2.9.1"
 )
 
 # CORS
@@ -159,13 +159,13 @@ async def check_spf(domain: str) -> dict:
 
 
 async def check_dkim(domain: str) -> dict:
-    """Check DKIM records."""
+    """Check DKIM records (TXT and CNAME for Microsoft 365)."""
     result = {"check": "dkim", "found": False, "raw": "", "alert": None, "score": 0}
     
     selectors = [
         "default", "s1", "s2", "mail", "dkim", "email",
         "selector1", "selector2",  # Microsoft 365
-        "google", "20161025", "20210112",  # Google
+        "google", "20161025", "20210112", "20230601",  # Google
         "k1", "k2", "k3",
         "mandrill", "mailchimp", "mc",
         "smtp", "smtpapi",
@@ -180,11 +180,35 @@ async def check_dkim(domain: str) -> dict:
     raw_lines = []
     
     for selector in selectors:
+        dkim_domain = f"{selector}._domainkey.{domain}"
+        
+        # Try TXT record first
         record = dns_query(domain, "TXT", f"{selector}._domainkey")
         if record:
             found_selectors.append(selector)
-            raw_lines.append(f"-> {selector}._domainkey.{domain}")
+            raw_lines.append(f"-> {dkim_domain}")
+            raw_lines.append(f"   Type: TXT")
             raw_lines.append(record.replace('"', '')[:200] + "...")
+            raw_lines.append("")
+            continue
+        
+        # Try CNAME record (Microsoft 365, etc.)
+        cname_record = dns_query_cname(domain, f"{selector}._domainkey")
+        if cname_record:
+            found_selectors.append(selector)
+            
+            # Identify provider from CNAME
+            provider = ""
+            if "dkim.mail.microsoft" in cname_record.lower():
+                provider = " [Microsoft 365]"
+            elif "google" in cname_record.lower():
+                provider = " [Google Workspace]"
+            elif "amazonses" in cname_record.lower():
+                provider = " [Amazon SES]"
+            
+            raw_lines.append(f"-> {dkim_domain}{provider}")
+            raw_lines.append(f"   Type: CNAME")
+            raw_lines.append(f"   Points to: {cname_record}")
             raw_lines.append("")
     
     if found_selectors:
@@ -197,6 +221,24 @@ async def check_dkim(domain: str) -> dict:
         result["alert"] = "No DKIM record detected"
     
     return result
+
+
+def dns_query_cname(domain: str, prefix: str = None) -> Optional[str]:
+    """Query CNAME record specifically."""
+    try:
+        resolver = dns.resolver.Resolver()
+        resolver.timeout = DNS_TIMEOUT
+        resolver.lifetime = DNS_TIMEOUT
+        
+        query_domain = f"{prefix}.{domain}" if prefix else domain
+        answers = resolver.resolve(query_domain, "CNAME")
+        
+        for rdata in answers:
+            return str(rdata.target).rstrip('.')
+        
+        return None
+    except:
+        return None
 
 
 async def check_dmarc(domain: str) -> dict:
